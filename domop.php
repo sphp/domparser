@@ -15,12 +15,11 @@ DomOP::inrHTML($elm);
 $elm = $domh->find("a")->node(0)->parentNode; DomOP::inrHTML($elm);
 */
 /* DOMDocument Object parser class */
-class DomOP{
+class dom{
     public $doc = null;
     public $tempDir = "./temp/";
 	public $content = null;
 	public $nodeList = null;
-	
 	function __construct(){
 		if( $this->doc === null ){
 			$this->doc = new DOMDocument();
@@ -37,25 +36,33 @@ class DomOP{
 		$this->content = $this->get_contents($url);
 		$this->doc->loadHTML($this->content);
 	}
-
-	function get_contents($url){
-	    return file_get_contents($url,false,stream_context_create(array('http' => array('header'=>'Connection: close\r\n'))));
+	static function get_contents($url){
+	    return file_get_contents($url, false, stream_context_create(array('http' => array('header'=>'Connection: close\r\n'))));
 	}
-	function curl_get_url($url)
-	{
-	    $ch = curl_init();
-	    curl_setopt($ch, CURLOPT_URL, $url);
-	    curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-	    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
-	    $ip=rand(0,255).'.'.rand(0,255).'.'.rand(0,255).'.'.rand(0,255);
-	    curl_setopt($ch, CURLOPT_HTTPHEADER, array("REMOTE_ADDR: $ip", "HTTP_X_FORWARDED_FOR: $ip"));
-	    curl_setopt($ch, CURLOPT_USERAGENT, "Mozilla/".rand(3,5).".".rand(0,3)." (Windows NT ".rand(3,5).".".rand(0,2)."; rv:2.0.1) Gecko/20100101 Firefox/".rand(3,5).".0.1");
-	    $html = curl_exec($ch);
+	static function curl_get_url($url){
+		$ch = curl_init($url);
+		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, FALSE);
+		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+		curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+		curl_setopt($ch, CURLOPT_ENCODING,"");
+		curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+		curl_setopt($ch, CURLOPT_TIMEOUT,10);
+		curl_setopt($ch, CURLOPT_FAILONERROR,true);
+		curl_setopt($ch, CURLOPT_ENCODING,"");
+		curl_setopt($ch, CURLOPT_VERBOSE, true);
+		curl_setopt($ch, CURLINFO_HEADER_OUT, true);
+		curl_setopt($ch, CURLOPT_HEADER, true);
+		$result = curl_exec($ch);
+	    $stcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+	    $sttext = curl_getinfo($ch);
 	    curl_close($ch);
-	    return $html;
+	    if($stcode!=200){
+		    echo "HTTP ERROR ".$stcode."<br><pre>"; var_dump($sttext); echo("</pre>");
+		    return false;
+	    }
+	    return $result;
 	}
-
-	function get_Dir($str=null){
+	function getDir($str=null){
 		$ext = file_ext($str); return ($ext!='css' && $ext!='js') ? 'asset/' : $ext.'/';
 	}
 	function forceGrab($url,$downloadFiles=false){
@@ -66,12 +73,11 @@ class DomOP{
 			$this->content = $this->get_contents($url);
 			$links  = self::in2strs('src="','"',$this->content);
 			$real_links  = !empty($links) ? self::relParh($links, $url) : null;
-
 			if($downloadFiles){
 				$fileArr = [];
 				foreach ($real_links as $src) {
 					$file = basename($src);
-					$fileArr[] = $file = $this->tempDir . $this->get_Dir($file).$file;
+					$fileArr[] = $file = $this->tempDir . $this->getDir($file).$file;
 					if(!is_readable( $file))
 						file_put_contents($file, $this->get_contents($src));
 				}
@@ -86,7 +92,7 @@ class DomOP{
 				$fileArr = [];
 				foreach ($real_links as $href) {
 					$file = basename($href);
-					$fileArr[] = $file = $this->tempDir . $this->get_Dir($file).$file;
+					$fileArr[] = $file = $this->tempDir . $this->getDir($file).$file;
 					if(!is_readable( $file))
 						file_put_contents( $file, $this->get_contents($href));
 				}
@@ -224,4 +230,10 @@ class DomOP{
 		$selector = implode(',', $sub_selectors);
 		return $selector;
 	}
+}
+if(!function_exists('file_age')){
+	function file_age($fpath){ return time() - filemtime($fpath); }
+}
+if(!function_exists('file_ext')){
+	function file_ext($fpath){ return substr($fpath, strrpos($fpath, '.')+1); }
 }
