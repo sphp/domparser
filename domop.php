@@ -179,7 +179,7 @@ class dom{
 		foreach ($this->nodeList as $node) $arr[] = trim(self::inrHTML($node));
 		return !empty($arr) ? $arr : null;
 	}
-	function saveHTMLtoFile($fpath){
+	function fileSave($fpath){
 		return $this->doc->saveHTMLFile($fpath);
 	}
 	function toXPath($selector) { // remove spaces around operators
