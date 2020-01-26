@@ -1,8 +1,7 @@
 <?php
-
 class dom{
 	public $elms = null;
-	public $doc  = null;
+    public $doc  = null;
 	public $content = null;
 	public $that;
 	static $data;
@@ -25,7 +24,7 @@ class dom{
 		}
 		$data = self::$data;
 		if(!empty($data)){
-			if(is_string($data) && self::isHtml($data)){
+			if(is_string($data)){
 				$this->content = $data;
 				$this->doc->loadHTML($data);
 			}
@@ -86,17 +85,17 @@ class dom{
 	}
 	static function getContent($url, $exp=86400/*24hr*/, $dir='./temp/'){
 		extract(parse_url($url));
-		$path = self::absPath($dir.$host).DIRECTORY_SEPARATOR;
+		$path = absPath($dir.$host).DIRECTORY_SEPARATOR;
 		if(!file_exists($path)) mkdir($path, 0777, true);	//create directory if not exists
 		$path .= self::normalizeStr( !empty(basename($url)) ? basename($url) : $host);//create data file name from target url
 		$path = strpos($path, '.html') ? $path : $path.'.html';
 		if(is_readable($path) && time()-filemtime($path) < $exp){
-			self::cacheClean();
+			self::cacheClean($exp);
 			return file_get_contents($path);
 		}else{
 			$curl = self::curlGet($url);
-			if($curl['http_code']==200) file_put_contents($path, $curl['data']);
-			return $curl;
+			if($curl['http_code']==200) file_put_contents($path, $curl['contents']);
+			return $curl['contents'];
 		}
 	}
 	static function getContent2($url){
@@ -152,15 +151,6 @@ class dom{
 		}
 		return $headers;
 	}
-	static function absPath($path){
-		$path = str_replace(['/', '\\'], 'DS', $path);
-		$relDirs = array_filter(explode('DS', $path), function($p){return $p!=='.';});
-		$absDirs = explode(DIRECTORY_SEPARATOR, getcwd());
-		foreach($relDirs as $dir) $dir=='..' ? array_pop($absDirs) : array_push($absDirs, $dir);
-		return implode(DIRECTORY_SEPARATOR, $absDirs);
-	}
-	static function isHtml($str){return $str != strip_tags($str) ? true:false;}
-
 	static function inStrs($str,$s,$e){
 		if(is_array($str)) $str = implode(' ', $str);
 		$p=explode($s,$str);$m=[];
@@ -205,9 +195,8 @@ class dom{
 			$path = $this->toXPath($sel);
 			$xpath = new DOMXpath($this->doc);
 			$this->elms = $xpath->query($path);
-		}else{
-			$this->$sel();
 		}
+		else $this->$sel();
 		return $this;
 	}
 	function GetById($id){
@@ -291,18 +280,23 @@ class dom{
 		ignore_user_abort(true);
 		set_time_limit(0);
 		ob_start();
-		foreach (glob($dir.'*') as $file) if($force || is_file($file) && time()-filemtime($file) >= 60*60*24) xdelete($file);
-		ob_flush(); 
+		foreach(dirIterator('./temp/') as $path=>$obj){
+			if($force || is_file($path) && time()-filemtime($path) >= 60*60*24) is_dir($path) ? rmdir($path) : unlink($path);
+		}
+		ob_flush();
 		flush(); 
 	}
 }
-function xdelete($target){
-	if(is_file($target)) return @unlink($target);
-	else if(is_dir($target)) {
-		$scan = glob(rtrim($target, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . '*');
-		foreach($scan as $index=>$path) xdelete($path);
-		return @rmdir($target);
-	}
+function isHtml($str){return $str != strip_tags($str) ? true:false;}
+function absPath($path){
+	$path = str_replace(['/', '\\'], 'DS', $path);
+	$relDirs = array_filter(explode('DS', $path), function($p){return $p!=='.';});
+	$absDirs = explode(DIRECTORY_SEPARATOR, getcwd());
+	foreach($relDirs as $dir) $dir=='..' ? array_pop($absDirs) : array_push($absDirs, $dir);
+	return implode(DIRECTORY_SEPARATOR, $absDirs);
+}
+function dirIterator($path, $dots=RecursiveDirectoryIterator::SKIP_DOTS){
+	return new RecursiveIteratorIterator(new RecursiveDirectoryIterator(absPath($path), $dots), RecursiveIteratorIterator::SELF_FIRST);
 }
 if(!function_exists('one')){function one($var){return is_array($var) && count($var)===1 ? $var[0] : $var;}}
 if(!function_exists('pre')){function pre($var, $xit=0){echo('<pre>'); print_r($var);echo('</pre>');if($xit) exit;}}
