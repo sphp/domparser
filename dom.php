@@ -1,11 +1,7 @@
 <?php
 class dom{
-	public $elms = null;
-    public $doc  = null;
-	public $content = null;
-	public $that;
-	static $data;
-	static $attrs   = ['class','id','href','src','data'];
+	public $elms, $doc, $content, $that;
+	static $data, $attrs   = ['class','id','href','src','data'];
 	static $domVars = [
 		'tag'	=>'tagName',
 		'val'	=>'nodeValue',
