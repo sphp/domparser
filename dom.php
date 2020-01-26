@@ -1,52 +1,107 @@
 <?php
-class Dom{
-	public $doc;
-	static $parsedUrl;
+
+class dom{
+	public $nodeList = null;
+    public $doc = null;
+	public $content = null;
+	public $dom, $that;
 	static $data;
-	static $temp='./temp/';
+	static $attrs   = ['class','id','href','src','data'];
+	static $domVars = [
+		'tag'	=>'tagName',
+		'val'	=>'nodeValue',
+		'type'	=>'nodeType',
+		'parent'=>'parentNode',
+		'child'	=>'childNodes',
+		'first'	=>'firstChild',
+		'last'	=>'lastChild',
+		'attr'	=>'attributes',
+		'text'	=>'textContent',
+		'prev'  =>'previousSibling'
+	];
+
 	function __construct(){
-		if($this->doc === null){
-			$this->doc = new DOMDocument();
-			libxml_use_internal_errors(true);
+		if($this->doc===null){
+			$this->doc = new DOMDocument(); libxml_use_internal_errors(1); //disable libxml errors
 		}
-		if(self::$data) $this->doc->loadHTML(self::$data);
-	}
-	static function __callStatic($func, $args){
-		$data = $args[0];
-		if(filter_var($data, FILTER_VALIDATE_URL)){
-			self::$parsedUrl = parse_url($data);
-			self::getData($data);
+		$data = self::$data;
+		if(!empty($data)){
+			if(is_string($data) && self::isHtml($data)){
+				$this->content = $data;
+				$this->doc->loadHTML($data);
+			}
+			else if(is_object($data)) $this->content = self::$data->saveHTML();
 		}
-		else self::$func = $data;
-		return new self;
+		$this->that = $this->nodeList = $this->doc; //copy of start;
 	}
-	static function getData($url, $expire=86400/*24hr*/){
-		extract(self::$parsedUrl);
-		$path = self::absPath(self::$temp . $host) . DIRECTORY_SEPARATOR;
-		//create directory if not exists
-		if (!file_exists($path)) mkdir($path, 0777, true);
-		//create data file name from target url
-		$path .= !empty(basename($url)) ? basename($url) : $host.'.html';
-		if(is_readable($path) && time()-filemtime($path) < $expire){
-			self::$data = file_get_contents($path);
-		}else{
-			$output = self::curlGet($url, 1);
-			if($output['info']['http_code']==200){
-				self::$data = $output['data'];
-				file_put_contents($path, $output['data']);
+	static function __callStatic($name, $args){
+		if(filter_var($args[0], FILTER_VALIDATE_URL)) self::$data=self::getContent($args[0]);
+		else self::$$name = $args; return new self;
+	}
+	function __get($var){
+		if(array_key_exists($var, self::$domVars)) $var = self::$domVars[$var];//pre($var);
+		return property_exists($this->nodeList, $var) ? $this->nodeList->$var : null;
+	}
+	function __call($name, $args){
+		if(method_exists($this->doc, $name)){
+			return call_user_func_array(array($this->doc, $name), $args);
+		}
+		else if(in_array($name, self::$attrs)){
+			if(isset($args[0]) && is_string($args[0])){
+				if($name=='id') $this->nodeList = $this->doc->getElementById($args[0]);
+				else if($name=='class') return $this->find('.'. $args[0]); //pre($this->nodeList,1);
+			}else{
+				$data = str_replace("'", '"', self::$data);
+				return self::inStrs($data, str_replace("_", '-', $name)."=\"", "\"");
 			}
 		}
-		return !empty(self::$data) ? self::$data : false;
+		else{
+			$e = $this->getElementsByTagName($name);
+			if(!empty($e)){
+				$this->nodeList = isset($args[0]) && is_integer($args[0]) ? $e[$args[0]] : $e;
+			}
+			else $this->nodeList = $this->$name;
+		}
+		return $this;
 	}
-	static function absPath($path){
-		$path = str_replace(array('/', '\\'), 'DS', $path);
-		$relDirs = array_filter(explode('DS', $path), function($p){return $p!=='.';});
-		$absDirs = explode(DIRECTORY_SEPARATOR, getcwd());
-		foreach($relDirs as $dir) $dir=='..' ? array_pop($absDirs) : array_push($absDirs, $dir);
-		return implode(DIRECTORY_SEPARATOR, $absDirs);
+	function loadHTML($html){
+		$this->doc->loadHTML($html);
 	}
-	static function curlGet($url, $info=0){
-		$result = [];
+	function loadURL($url){
+		$this->content = $this->getContent($url);
+		$this->doc->loadHTML($this->content);
+	}
+	function nodeHtml(DOMNode $elm){
+		$str=''; 
+		if($elm) foreach($elm->childNodes as $kid) $str .= trim($elm->ownerDocument->saveHTML($kid));
+		return $str;
+	}
+	function html(){
+		if(!isset($this->nodeList->length)) return $this->nodeHtml( $this->nodeList );
+		$arr=[]; foreach($this->nodeList as $node) $arr[] = $this->nodeHtml($node); return implode(PHP_EOL, $arr);
+	}
+	function fileSave($path){
+		return $this->doc->saveHTMLFile($path);
+	}
+	static function getContent($url, $exp=86400/*24hr*/, $dir='./temp/'){
+		extract(parse_url($url));
+		$path = self::absPath($dir.$host).DIRECTORY_SEPARATOR;
+		if(!file_exists($path)) mkdir($path, 0777, true);	//create directory if not exists
+		$path .= self::normalizeStr(!empty(basename($url)) ? basename($url) : $host);//create data file name from target url
+		$path = strpos($path, '.html') ? $path : $path.'.html';
+		if(is_readable($path) && time()-filemtime($path) < $exp){
+			//oldRemove();
+			return file_get_contents($path);
+		}else{
+			$curl = self::curlGet($url);
+			if($curl['http_code']==200) file_put_contents($path, $curl['data']);
+			return $curl;
+		}
+	}
+	static function getContent2($url){
+	    return file_get_contents($url, false, stream_context_create(array('http' => array('header'=>'Connection: close\r\n'))));
+	}
+	static function curlGet($url){
 		$ch = curl_init($url);
 		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0);
 		curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
@@ -55,67 +110,41 @@ class Dom{
 		curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
 		curl_setopt($ch, CURLOPT_TIMEOUT, 30);
 		curl_setopt($ch, CURLOPT_FAILONERROR, 1);
-		$result = curl_exec($ch);
-		$cinfo  = curl_getinfo($ch);
+		$data = curl_exec($ch);
+		$info = curl_getinfo($ch);
 		curl_close($ch);
-		if($cinfo['http_code']!=200) return $cinfo;
-		return $info ? ['info' => $cinfo, 'data' => $result] : $result;
+		if($info['http_code']==200) $info['data'] = $data; 
+		return $info;
 	}
-	static function inrHTML(DOMNode $element=null){
-		$innerHTML="";
-		$children =$element->childNodes;
-		foreach($children as $child)
-		$innerHTML .= $element->ownerDocument->saveHTML($child);
-		return trim($innerHTML);
+	static function absPath($path){
+		$path = str_replace(['/', '\\'], 'DS', $path);
+		$relDirs = array_filter(explode('DS', $path), function($p){return $p!=='.';});
+		$absDirs = explode(DIRECTORY_SEPARATOR, getcwd());
+		foreach($relDirs as $dir) $dir=='..' ? array_pop($absDirs) : array_push($absDirs, $dir);
+		return implode(DIRECTORY_SEPARATOR, $absDirs);
 	}
-	static function make_clickable($text){
-		$regex = '#\bhttps?://[^\s()<>]+(?:\([\w\d]+\)|([^[:punct:]\s]|/))#';
-		return preg_replace_callback($regex, function ($matches) {
-			return "<a href=\'{$matches[0]}\'>{$matches[0]}</a>";
-		},$text);
+	static function isHtml($str){return $str != strip_tags($str) ? true:false;}
+
+	static function inStrs($str,$s,$e){
+		if(is_array($str)) $str = implode(' ', $str);
+		$p=explode($s,$str);$m=[];
+		for($i=1;$i<count($p);$i++) $m[]=explode($e,$p[$i])[0];
+		return $m;
 	}
-	static function in2strs($data, $start, $end, $callback=null){
-		$p=array();
-		$p1=explode($start,$data);
-		for($i=1,$c=count($p1) ; $i<$c ; $i++){
-			$p2 = explode($end,$p1[$i])[0];
-			if($callback) call_user_func($callback, $p2);
-			$p[] = $p2;
-		}
-		return $p;
-	}
-	static function strBetween($str, $from, $to, $callback=null){
-		$string = substr($str, strpos($str, $from) + strlen($from));
-		if(strstr($string, $to,true)!=false) $string = strstr ($string,$to,true);
-		return $string;
-	}
-	function __call($func, $args){
-		if(method_exists($this->doc, $func))
-			return call_user_func_array(array($this->doc, $func), $args);
-		else{
-			if(strpos($func, '_')!==false) $func = str_replace("_", '-', $func);
-			str_replace("'", '"', self::$data);
-			return array_filter(self::in2strs(self::$data, $func."='" ,"'"));
-		}
-	}
-	static function getUrls($data){
-		return matches('#\bhttps?://[^,\s()<>]+(?:\([\w\d]+\)|([^,[:punct:]\s]|/))#', $data)[0];
-	}
-	function urls(){
-		return array_map(function($str){return str_replace(['"','\''],'',explode('>',$str,2)[0]);}, self::getUrls(self::$data));
-	}
-	function find($selectr){
-		$xp = $this->xPath($selectr);
-		$xh = new DOMXpath($this->doc);
-		$this->nodeList = $xh->query($xp);
+	function between($start, $end){
+		$str = explode($start, $this->content,2)[1];
+		$this->doc->loadHTML(explode($end, $str,2)[0]);
 		return $this;
 	}
-	function loadHTML($html){
-		$this->doc->loadHTML( $html );
+	function after($str){
+		$str = explode($str, $this->content,2)[1];
+		$this->doc->loadHTML($str);
+		return $this;
 	}
-	function loadURL($url){
-		$this->content = $this->get_contents($url);
-		$this->doc->loadHTML( $this->content );
+	function before($str){
+		$str = explode($str, $this->content,2)[0];
+		$this->doc->loadHTML($str);
+		return $this;
 	}
 	function nodes(){
 		return $this->nodeList;
@@ -124,121 +153,100 @@ class Dom{
 		return $this->nodeList->item($indx);
 	}
 	function attr($val){
-		$arr=[];
-		foreach($this->nodeList as $node) $arr[]=$node->getAttribute($val);
-		return array_filter($arr);
+		$arr = [];
+		foreach ($this->nodeList as $node) $arr[] = $node->getAttribute($val);
+		return !empty($arr) ? $arr : null;
 	}
-	function text(){
-		$arr=[];
-		foreach($this->nodeList as $node) $arr[]=trim($node->textContent);
-		return $arr;
+	function innerText(){
+		$arr = [];
+		foreach ($this->nodeList as $node) $arr[] = trim($node->textContent);
+		return !empty($arr) ? $arr : null;
+	}
+	function find($sel){
+		if(!ctype_alpha($sel)){
+			$path = $this->toXPath($sel);
+			$xpath = new DOMXpath($this->doc);
+			$this->nodeList = $xpath->query($path);
+		}else{
+			$this->$sel();
+		}
+		return $this;
 	}
 	function GetById($id){
-		$this->nodeList=$this->doc->getElementById($id);
-		return $this;
+	    $this->nodeList = $this->doc->getElementById($id);
+	    return $this;
 	}
 	function GetByTagName($tag){
-		$this->nodeList = $this->doc->getElementsByTagName($tag);
-		return $this;
+	    $this->nodeList = $this->doc->getElementsByTagName($tag);
+	    return $this;
 	}
 	function GetByClass($class){
-		$xpath=new DOMXPath($this->doc);
-		$this->nodeList=$xpath->query( "//*[contains(concat(' ',	normalize-space(@class),' '),' $class ')]" );
-		return $this;
+	    $xpath = new DOMXPath($this->doc);
+	    $this->nodeList = $xpath->query( "//*[contains(concat(' ', normalize-space(@class), ' '), ' $class ')]" );
+	    return $this;
 	}
-	function innerHTML(){
-		$arr=[];
-		foreach($this->nodeList as $node) $arr[]=trim(self::inrHTML($node));
-		return array_filter($arr);
-	}
-	function save($fpath){
-		return $this->doc->saveHTMLFile($fpath);
-	}
-	function xPath($sl){
-		//remove spaces around operators
-		$sl=preg_replace('/\s*>\s*/','>',$sl);
-		$sl=preg_replace('/\s*~\s*/','~',$sl);
-		$sl=preg_replace('/\s*\+\s*/','+',$sl);
-		$sl=preg_replace('/\s*,\s*/',',',$sl);
-		$sls=preg_split('/\s+(?![^\[]+\])/',$sl);
-		foreach($sls as &$sl){
-			$sl=preg_replace('/,/','|descendant-or-self::',$sl);// ,
-			$sl=preg_replace('/(.+)?:(checked|disabled|required|autofocus)/','\1[@\2="\2"]',$sl);//input:checked, :disabled, etc.
-			$sl=preg_replace('/(.+)?:(autocomplete)/','\1[@\2="on"]',$sl);//input:autocomplete, :autocomplete
-			$sl=preg_replace('/:(text|password|checkbox|radio|button|submit|reset|file|hidden|image|datetime|datetime-local|date|month|time|week|number|range|email|url|search|tel|color)/','input[@type="\1"]',$sl);//input:button, input:submit, etc.
-			$sl=preg_replace('/(\w+)\[([_\w-]+[_\w\d-]*)\]/','\1[@\2]',$sl);// foo[id]
-			$sl=preg_replace('/\[([_\w-]+[_\w\d-]*)\]/','*[@\1]',$sl); // [id]
-			$sl=preg_replace('/\[([_\w-]+[_\w\d-]*)=[\'"]?(.*?)[\'"]?\]/','[@\1="\2"]',$sl);// foo[id=foo]
-			$sl=preg_replace('/^\[/','*[',$sl);// [id=foo]
-			$sl=preg_replace('/([_\w-]+[_\w\d-]*)\#([_\w-]+[_\w\d-]*)/','\1[@id="\2"]',$sl);//div#foo
-			$sl=preg_replace('/\#([_\w-]+[_\w\d-]*)/','*[@id="\1"]',$sl);// #foo
-			$sl=preg_replace('/([_\w-]+[_\w\d-]*)\.([_\w-]+[_\w\d-]*)/','\1[contains(concat("",@class," ")," \2 ")]',$sl);// div.foo
-			$sl=preg_replace('/\.([_\w-]+[_\w\d-]*)/','*[contains(concat("",@class," ")," \1 ")]',$sl);// .foo
-			$sl=preg_replace('/([_\w-]+[_\w\d-]*):first-child/','*/\1[position()=1]',$sl);//div:first-child
-			$sl=preg_replace('/([_\w-]+[_\w\d-]*):last-child/','*/\1[position()=last()]',$sl);//div:last-child
-			$sl=str_replace(':first-child','*/*[position()=1]',$sl);// :first-child
-			$sl=str_replace(':last-child','*/*[position()=last()]',$sl);// :last-child
-			$sl=preg_replace('/:nth-last-child\((\d+)\)/','[position()=(last()-(\1 - 1))]',$sl);// :nth-last-child
-			$sl=preg_replace('/([_\w-]+[_\w\d-]*):nth-child\((\d+)\)/','*/*[position()=\2and self::\1]',$sl);// div:nth-child
-			$sl=preg_replace('/:nth-child\((\d+)\)/','*/*[position()=\1]',$sl);//:nth-child
-			$sl=preg_replace('/([_\w-]+[_\w\d-]*):contains\((.*?)\)/','\1[contains(string(.),"\2")]',$sl);//:contains(Foo)
-			$sl=preg_replace('/>/','/',$sl);// >
-			$sl=preg_replace('/~/','/following-sibling::',$sl);// ~
-			$sl=preg_replace('/\+([_\w-]+[_\w\d-]*)/','/following-sibling::\1[position()=1]',$sl);//+
-			$sl=str_replace(']*',']',$sl);
-			$sl=str_replace(']/*',']',$sl);
+	function toXPath($selector) { // remove spaces around operators
+		$selector = preg_replace('/\s*>\s*/', '>', $selector);
+		$selector = preg_replace('/\s*~\s*/', '~', $selector);
+		$selector = preg_replace('/\s*\+\s*/', '+', $selector);
+		$selector = preg_replace('/\s*,\s*/', ',', $selector);
+		$selectors = preg_split('/\s+(?![^\[]+\])/', $selector);
+		foreach ($selectors as &$selector) {
+			$selector = preg_replace('/,/', '|descendant-or-self::', $selector);// ,
+			$selector = preg_replace('/(.+)?:(checked|disabled|required|autofocus)/', '\1[@\2="\2"]', $selector);// input:checked, :disabled, etc.
+			$selector = preg_replace('/(.+)?:(autocomplete)/', '\1[@\2="on"]', $selector);// input:autocomplete, :autocomplete
+			$selector = preg_replace('/:(text|password|checkbox|radio|button|submit|reset|file|hidden|image|datetime|datetime-local|date|month|time|week|number|range|email|url|search|tel|color)/', 'input[@type="\1"]', $selector);// input:button, input:submit, etc.
+			$selector = preg_replace('/(\w+)\[([_\w-]+[_\w\d-]*)\]/', '\1[@\2]', $selector);// foo[id]
+			$selector = preg_replace('/\[([_\w-]+[_\w\d-]*)\]/', '*[@\1]', $selector); // [id]
+			$selector = preg_replace('/\[([_\w-]+[_\w\d-]*)=[\'"]?(.*?)[\'"]?\]/', '[@\1="\2"]', $selector); // foo[id=foo]
+			$selector = preg_replace('/^\[/', '*[', $selector);// [id=foo]
+			$selector = preg_replace('/([_\w-]+[_\w\d-]*)\#([_\w-]+[_\w\d-]*)/', '\1[@id="\2"]', $selector);// div#foo
+			$selector = preg_replace('/\#([_\w-]+[_\w\d-]*)/', '*[@id="\1"]', $selector);// #foo
+			$selector = preg_replace('/([_\w-]+[_\w\d-]*)\.([_\w-]+[_\w\d-]*)/', '\1[contains(concat(" ",@class," ")," \2 ")]', $selector);// div.foo
+			$selector = preg_replace('/\.([_\w-]+[_\w\d-]*)/', '*[contains(concat(" ",@class," ")," \1 ")]', $selector);// .foo
+			$selector = preg_replace('/([_\w-]+[_\w\d-]*):first-child/', '*/\1[position()=1]', $selector);// div:first-child
+			$selector = preg_replace('/([_\w-]+[_\w\d-]*):last-child/', '*/\1[position()=last()]', $selector);// div:last-child
+			$selector = str_replace(':first-child', '*/*[position()=1]', $selector);// :first-child
+			$selector = str_replace(':last-child', '*/*[position()=last()]', $selector);// :last-child
+			$selector = preg_replace('/:nth-last-child\((\d+)\)/', '[position()=(last() - (\1 - 1))]', $selector);// :nth-last-child
+			$selector = preg_replace('/([_\w-]+[_\w\d-]*):nth-child\((\d+)\)/', '*/*[position()=\2 and self::\1]', $selector);// div:nth-child
+			$selector = preg_replace('/:nth-child\((\d+)\)/', '*/*[position()=\1]', $selector);// :nth-child
+			$selector = preg_replace('/([_\w-]+[_\w\d-]*):contains\((.*?)\)/', '\1[contains(string(.),"\2")]', $selector);// :contains(Foo)
+			$selector = preg_replace('/>/', '/', $selector);// >
+			$selector = preg_replace('/~/', '/following-sibling::', $selector);// ~
+			$selector = preg_replace('/\+([_\w-]+[_\w\d-]*)/', '/following-sibling::\1[position()=1]', $selector);// +
+			$selector = str_replace(']*', ']', $selector);
+			$selector = str_replace(']/*', ']', $selector);
 		}
-		$sl=implode('/descendant::',$sls);
-		$sl='descendant-or-self::' . $sl;
-		$sl=preg_replace('/(((\|)?descendant-or-self::):scope)/','.\3',$sl);// :scope
-		$sub_sls=explode(',',$sl);// $element
-		foreach($sub_sls as $key => $sub_sl){
-			$parts=explode('$',$sub_sl);
-			$sub_sl=array_shift($parts);
-			if(count($parts) && preg_match_all('/((?:[^\/]*\/?\/?)|$)/', $parts[0], $matches)){
-				$results=$matches[0];
-				$results[]=str_repeat('/..', count($results) - 2);
-				$sub_sl .= implode('',$results);
+		// ' '
+		$selector = implode('/descendant::', $selectors);
+		$selector = 'descendant-or-self::' . $selector;
+		$selector = preg_replace('/(((\|)?descendant-or-self::):scope)/', '.\3', $selector);// :scope
+		$sub_selectors = explode(',', $selector);// $element
+		foreach ($sub_selectors as $key => $sub_selector) {
+			$parts = explode('$', $sub_selector);
+			$sub_selector = array_shift($parts);
+			if (count($parts) && preg_match_all('/((?:[^\/]*\/?\/?)|$)/', $parts[0], $matches)) {
+				$results = $matches[0];
+				$results[] = str_repeat('/..', count($results) - 2);
+				$sub_selector .= implode('', $results);
 			}
-			$sub_sls[$key]=$sub_sl;
+			$sub_selectors[$key] = $sub_selector;
 		}
-		$sl=implode(',',$sub_sls);
-		return $sl;
+		$selector = implode(',', $sub_selectors);
+		return $selector;
+	}
+	static function normalizeStr($str = ''){
+	    $str = strip_tags($str); 
+	    $str = preg_replace('/[\r\n\t ]+/', ' ', $str);
+	    $str = preg_replace('/[\"\*\/\:\<\>\?\'\|]+/', ' ', $str);
+	    $str = strtolower($str);
+	    $str = html_entity_decode( $str, ENT_QUOTES, "utf-8" );
+	    $str = htmlentities($str, ENT_QUOTES, "utf-8");
+	    $str = preg_replace("/(&)([a-z])([a-z]+;)/i", '$2', $str);
+	    $str = str_replace(' ', '-', $str);
+	    $str = rawurlencode($str);
+	    $str = str_replace('%', '-', $str);
+	    return $str;
 	}
 }
-function matches($pattern, $data){
-	preg_match_all($pattern, $data, $matches);
-	return $matches;
-}
-function getdom($html,$selector){
-	if(!empty($html)){
-		$dh = new DOMDocument();
-		libxml_use_internal_errors(TRUE); //disable libxml errors
-		$domh->loadHTML($html);
-		libxml_clear_errors(); //remove errors for yucky html
-		$xp = new DOMXPath($domh);
-		$pokemon_row = $pokemon_xpath->query('//h2[@id]');
-		if($pokemon_row->length > 0){
-			foreach($pokemon_row as $row){
-				echo $row->nodeValue . "<br/>";
-			}
-		}
-	}
-}
-function pre($v,$x=0){echo('<pre>');print_r($v);echo('</pre>');if($x)exit;}
-$url = 'https://sabaiptv.blogspot.com/2019/12/fresh-iptv-m3u-playlist-30-december-2019.html';
-/*Examples*/
-//Dom::data($url)-> {to get any attribute call attribute name as function}
-$arr = Dom::data($url)->class(); //return all class name in page
-$arr = Dom::data($url)->id(); //return all id name in page
-$arr = Dom::data($url)->data_custom();  //return value of all custom data attribute in page
-$arr = Dom::data($url)->urls(); //return all urls in page
-$arr = Dom::data($url)->href(); //return all href in page
-$arr = Dom::data($url)->src(); //return all src in page
-$arr = Dom::data($url)->find('img')->attr('src'); //return all src in page
-$arr = Dom::data($url)->find('a')->attr('href'); //return all src in page
-$arr = Dom::data($url)->find('meta[name=viewport]')->attr('content'); //return all urls in page
-//$arr = Dom::data($url)->content();
-$arr = Dom::data($url)->find('.post-author');
-$arr = Dom::data($url)->urls(); //return all urls in page
-pre($arr);
