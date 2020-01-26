@@ -286,7 +286,6 @@ class dom{
 		flush(); 
 	}
 }
-function isHtml($str){return $str != strip_tags($str) ? true:false;}
 function absPath($path){
 	$path = str_replace(['/', '\\'], 'DS', $path);
 	$relDirs = array_filter(explode('DS', $path), function($p){return $p!=='.';});
@@ -297,7 +296,3 @@ function absPath($path){
 function dirIterator($path, $dots=RecursiveDirectoryIterator::SKIP_DOTS){
 	return new RecursiveIteratorIterator(new RecursiveDirectoryIterator(absPath($path), $dots), RecursiveIteratorIterator::SELF_FIRST);
 }
-if(!function_exists('one')){function one($var){return is_array($var) && count($var)===1 ? $var[0] : $var;}}
-if(!function_exists('pre')){function pre($var, $xit=0){echo('<pre>'); print_r($var);echo('</pre>');if($xit) exit;}}
-if(!function_exists('matches')){function matches($rp, $str){return preg_match_all($rp, $str, $match) ? $match : false;}}
-if(!function_exists('toArray')){function toArray($var,$sep=','){return is_string($var) ? explode($sep, $var) : $var;}}
